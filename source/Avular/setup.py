@@ -40,5 +40,17 @@ setup(
         "Programming Language :: Python :: 3.10",
         "Isaac Sim :: 4.5.0",
     ],
+
+    # <<< ADD THIS ENTRY_POINTS BLOCK >>>
+    entry_points={
+        "gymnasium.envs": [
+            # existing cart-pole demo
+            "Template-Avular-Direct-v0 = Avular.tasks.direct.avular.avular_env:AvularEnv",
+            # your new Origin-driving env
+            "OriginDrive-v0           = Avular.tasks.direct.origin.origin_env:OriginDriveEnv",
+        ]
+    },
+    # <<< END ENTRY_POINTS >>>
+
     zip_safe=False,
 )

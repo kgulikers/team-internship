@@ -17,6 +17,11 @@ from isaaclab.utils.math import sample_uniform
 
 from .avular_env_cfg import AvularEnvCfg
 
+# Correct camera import from Isaac Lab’s sensor package
+from isaaclab.sensors.camera.camera import Camera  # :contentReference[oaicite:0]{index=0}
+# Use isaacsim’s stage utility to get the current USD stage
+from isaacsim.core.utils.stage import get_current_stage  # :contentReference[oaicite:1]{index=1}
+
 
 class AvularEnv(DirectRLEnv):
     cfg: AvularEnvCfg
@@ -32,37 +37,52 @@ class AvularEnv(DirectRLEnv):
 
     def _setup_scene(self):
         self.robot = Articulation(self.cfg.robot_cfg)
-        # add ground plane
         spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
-        # clone and replicate
         self.scene.clone_environments(copy_from_source=False)
-        # add articulation to scene
         self.scene.articulations["robot"] = self.robot
-        # add lights
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
+
+    def _initialize_sensors(self):
+        super()._initialize_sensors()
+
+        # Attach an off-screen camera to each env instance
+        stage = get_current_stage()
+        cam = Camera(
+            prim_path=f"/World/envs/env_{self._env_id}/agent_cam",
+            name="agent_cam",
+            position=[2.0, 0.0, 1.0],   # tweak to frame your robot
+            look_at=[0.0, 0.0, 0.5],    # focal point
+            image_width=640,
+            image_height=480,
+            fov=60.0,
+        )
+        cam.initialize(stage)
+        self._sensors["agent_cam"] = cam
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = actions.clone()
 
     def _apply_action(self) -> None:
-        self.robot.set_joint_effort_target(self.actions * self.cfg.action_scale, joint_ids=self._cart_dof_idx)
+        self.robot.set_joint_effort_target(
+            self.actions * self.cfg.action_scale,
+            joint_ids=self._cart_dof_idx,
+        )
 
     def _get_observations(self) -> dict:
         obs = torch.cat(
             (
-                self.joint_pos[:, self._pole_dof_idx[0]].unsqueeze(dim=1),
-                self.joint_vel[:, self._pole_dof_idx[0]].unsqueeze(dim=1),
-                self.joint_pos[:, self._cart_dof_idx[0]].unsqueeze(dim=1),
-                self.joint_vel[:, self._cart_dof_idx[0]].unsqueeze(dim=1),
+                self.joint_pos[:, self._pole_dof_idx[0]].unsqueeze(1),
+                self.joint_vel[:, self._pole_dof_idx[0]].unsqueeze(1),
+                self.joint_pos[:, self._cart_dof_idx[0]].unsqueeze(1),
+                self.joint_vel[:, self._cart_dof_idx[0]].unsqueeze(1),
             ),
             dim=-1,
         )
-        observations = {"policy": obs}
-        return observations
+        return {"policy": obs}
 
     def _get_rewards(self) -> torch.Tensor:
-        total_reward = compute_rewards(
+        return compute_rewards(
             self.cfg.rew_scale_alive,
             self.cfg.rew_scale_terminated,
             self.cfg.rew_scale_pole_pos,
@@ -74,15 +94,16 @@ class AvularEnv(DirectRLEnv):
             self.joint_vel[:, self._cart_dof_idx[0]],
             self.reset_terminated,
         )
-        return total_reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         self.joint_pos = self.robot.data.joint_pos
         self.joint_vel = self.robot.data.joint_vel
 
         time_out = self.episode_length_buf >= self.max_episode_length - 1
-        out_of_bounds = torch.any(torch.abs(self.joint_pos[:, self._cart_dof_idx]) > self.cfg.max_cart_pos, dim=1)
-        out_of_bounds = out_of_bounds | torch.any(torch.abs(self.joint_pos[:, self._pole_dof_idx]) > math.pi / 2, dim=1)
+        out_of_bounds = (
+            torch.any(torch.abs(self.joint_pos[:, self._cart_dof_idx]) > self.cfg.max_cart_pos, dim=1)
+            | torch.any(torch.abs(self.joint_pos[:, self._pole_dof_idx]) > math.pi / 2, dim=1)
+        )
         return out_of_bounds, time_out
 
     def _reset_idx(self, env_ids: Sequence[int] | None):
@@ -125,8 +146,7 @@ def compute_rewards(
 ):
     rew_alive = rew_scale_alive * (1.0 - reset_terminated.float())
     rew_termination = rew_scale_terminated * reset_terminated.float()
-    rew_pole_pos = rew_scale_pole_pos * torch.sum(torch.square(pole_pos).unsqueeze(dim=1), dim=-1)
-    rew_cart_vel = rew_scale_cart_vel * torch.sum(torch.abs(cart_vel).unsqueeze(dim=1), dim=-1)
-    rew_pole_vel = rew_scale_pole_vel * torch.sum(torch.abs(pole_vel).unsqueeze(dim=1), dim=-1)
-    total_reward = rew_alive + rew_termination + rew_pole_pos + rew_cart_vel + rew_pole_vel
-    return total_reward
+    rew_pole_pos = rew_scale_pole_pos * torch.sum(pole_pos**2, dim=-1)
+    rew_cart_vel = rew_scale_cart_vel * torch.sum(torch.abs(cart_vel), dim=-1)
+    rew_pole_vel = rew_scale_pole_vel * torch.sum(torch.abs(pole_vel), dim=-1)
+    return rew_alive + rew_termination + rew_pole_pos + rew_cart_vel + rew_pole_vel
