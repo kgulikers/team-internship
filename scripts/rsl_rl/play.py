@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright (c) 2022-2025, The Isaac Lab Project Developers.
 # All rights reserved.
 #
@@ -7,8 +8,16 @@
 
 """Launch Isaac Sim Simulator first."""
 
-import argparse
+import os, sys
 
+# ─── Make Python find your Avular extension under source/Avular ───────────────
+here         = os.path.dirname(__file__)                             # .../Avular/Avular/scripts/rsl_rl
+project_root = os.path.abspath(os.path.join(here, "..", ".."))        # .../Avular/Avular
+source_dir   = os.path.join(project_root, "source")                  # .../Avular/Avular/source
+sys.path.insert(0, source_dir)
+# ───────────────────────────────────────────────────────────────────────────────
+
+import argparse
 from isaaclab.app import AppLauncher
 
 # local imports
@@ -59,21 +68,24 @@ from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkp
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
 
 import isaaclab_tasks  # noqa: F401
+import Avular.tasks      # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path, parse_env_cfg
-
-import Avular.tasks  # noqa: F401
 
 
 def main():
     """Play with RSL-RL agent."""
     # parse configuration
+    task_name = args_cli.task
+    print(">>> DEBUG: task_name =", repr(task_name), "   type =", type(task_name))
     env_cfg = parse_env_cfg(
         args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
     )
     agent_cfg: RslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
+    print(">>> DEBUG: agent_cfg.experiment_name =", repr(agent_cfg.experiment_name), "type=", type(agent_cfg.experiment_name))
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
+
     log_root_path = os.path.abspath(log_root_path)
     print(f"[INFO] Loading experiment from directory: {log_root_path}")
     if args_cli.use_pretrained_checkpoint:
